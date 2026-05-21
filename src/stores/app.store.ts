@@ -22,28 +22,53 @@ type DuplicateCouponDetails = {
 
 type LocalQueuePayload = Record<string, unknown>;
 
+type OfflineFallbackReason = 'network' | 'manual-offline';
+
+/**
+ * Returns current timestamp in API-compatible ISO format.
+ */
 function nowIso() {
   return new Date().toISOString();
 }
 
-function isNetworkLikeError(value: unknown) {
-  return value instanceof TypeError || (value instanceof Error && /fetch|network|failed/i.test(value.message));
+/**
+ * Detects browser/network errors produced by failed fetch requests.
+ */
+export function isNetworkLikeError(value: unknown) {
+  return value instanceof TypeError || (value instanceof Error && /fetch|network|failed|load failed|internet|offline/i.test(value.message));
 }
 
+/**
+ * Server errors should not be silently saved offline, but a lost connection should.
+ */
+function canFallbackToOffline(value: unknown): boolean {
+  return isNetworkLikeError(value) || (value instanceof ApiError && value.status === 0);
+}
+
+/**
+ * Merges active and archived lists returned by API into one deduplicated list.
+ */
 function mergeCoupons(active: Coupon[], archived: Coupon[]) {
   const byId = new Map<string, Coupon>();
   [...active, ...archived].forEach((coupon) => byId.set(coupon.id, coupon));
+
   return [...byId.values()].sort(
     (a, b) => Number(b.is_favorite) - Number(a.is_favorite) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
 }
 
+/**
+ * Converts unknown thrown values to a user-friendly message.
+ */
 function getApiErrorMessage(value: unknown): string {
   if (value instanceof ApiError) return value.message;
   if (value instanceof Error) return value.message;
   return 'Неизвестная ошибка';
 }
 
+/**
+ * Creates a non-critical sync message when server data cannot be refreshed.
+ */
 function getOfflineFallbackMessage(value: unknown): string {
   if (value instanceof ApiError) {
     if (value.status === 401) return 'Не удалось подтвердить Telegram-сессию. Открыта локальная копия.';
@@ -58,7 +83,9 @@ function getOfflineFallbackMessage(value: unknown): string {
   return `Не удалось обновить данные с сервера: ${getApiErrorMessage(value)}`;
 }
 
-
+/**
+ * Main data store. It keeps Supabase data and a local IndexedDB mirror in sync.
+ */
 export const useAppStore = defineStore('app', () => {
   const api = useApi();
 
@@ -81,15 +108,16 @@ export const useAppStore = defineStore('app', () => {
   let networkListenersInitialized = false;
 
   const selectedSpace = computed(() => spaces.value.find((space) => space.id === selectedSpaceId.value) ?? null);
-
   const currentUserRole = computed(() => selectedSpace.value?.role ?? 'member');
   const isOwner = computed(() => currentUserRole.value === 'owner');
-
   const activeCoupons = computed(() => coupons.value.filter((coupon) => !coupon.is_archived));
   const archivedCoupons = computed(() => coupons.value.filter((coupon) => coupon.is_archived));
   const isOffline = computed(() => !isOnline.value);
   const hasPendingSync = computed(() => pendingSyncCount.value > 0);
 
+  /**
+   * Shows a critical UI error. Sync/network issues use syncError instead.
+   */
   function setError(value: unknown) {
     if (value instanceof ApiError) {
       error.value = value.message;
@@ -103,23 +131,44 @@ export const useAppStore = defineStore('app', () => {
     error.value = null;
   }
 
+  /**
+   * Switches the app into offline mode after failed network requests.
+   */
   function markOfflineFromError(value: unknown) {
-    if (isNetworkLikeError(value)) {
+    if (canFallbackToOffline(value)) {
       isOnline.value = false;
     }
   }
 
+  /**
+   * Sets a friendly banner message when a mutation was saved locally.
+   */
+  function notifySavedOffline(reason: OfflineFallbackReason = 'network') {
+    syncError.value = reason === 'manual-offline'
+      ? 'Офлайн-режим: изменение сохранено локально и отправится позже.'
+      : 'Связь с сервером пропала. Изменение сохранено локально и отправится позже.';
+  }
+
+  /**
+   * Registers browser online/offline listeners once per application lifetime.
+   */
   function setupNetworkListeners() {
     if (networkListenersInitialized || typeof window === 'undefined') return;
     networkListenersInitialized = true;
 
     window.addEventListener('online', () => {
       isOnline.value = true;
-      void syncPendingChanges().then(() => refreshCurrentSpace()).catch(setError);
+      void syncPendingChanges()
+        .then(() => refreshCurrentSpace())
+        .catch((err) => {
+          markOfflineFromError(err);
+          syncError.value = getOfflineFallbackMessage(err);
+        });
     });
 
     window.addEventListener('offline', () => {
       isOnline.value = false;
+      syncError.value = 'Офлайн-режим: новые изменения будут сохранены локально.';
     });
   }
 
@@ -127,6 +176,9 @@ export const useAppStore = defineStore('app', () => {
     pendingSyncCount.value = await offlineDb.getPendingCount();
   }
 
+  /**
+   * Persists selected collection both in localStorage and IndexedDB.
+   */
   async function rememberSelectedSpace(spaceId: string | null) {
     selectedSpaceId.value = spaceId;
 
@@ -139,6 +191,9 @@ export const useAppStore = defineStore('app', () => {
     await offlineDb.saveSelectedSpaceId(spaceId);
   }
 
+  /**
+   * Applies an IndexedDB snapshot to reactive store state.
+   */
   function applySnapshot(snapshot: {
     user: AppUser | null;
     spaces: Space[];
@@ -160,6 +215,9 @@ export const useAppStore = defineStore('app', () => {
     hasOfflineCache.value = Boolean(snapshot.user || snapshot.spaces.length || snapshot.groups.length || snapshot.coupons.length);
   }
 
+  /**
+   * Loads cached data for the selected or requested collection.
+   */
   async function loadCachedSpace(spaceId: string | null = selectedSpaceId.value) {
     const snapshot = await offlineDb.loadSnapshot(spaceId);
     applySnapshot(snapshot);
@@ -196,6 +254,9 @@ export const useAppStore = defineStore('app', () => {
     await refreshPendingCount();
   }
 
+  /**
+   * Merges updates into a pending create/update operation to avoid duplicate queue items.
+   */
   async function mergeQueuedCreateOrAddUpdate(
     entity: SyncOperation['entity'],
     spaceId: string,
@@ -251,6 +312,150 @@ export const useAppStore = defineStore('app', () => {
     };
   }
 
+  function findLocalCouponDuplicate(payload: CreateCouponPayload) {
+    return coupons.value.find((coupon) => !coupon.is_archived && coupon.qr_text === payload.qr_text && coupon.space_id === selectedSpaceId.value);
+  }
+
+  /**
+   * Creates a group locally and adds a create operation to the sync queue.
+   */
+  async function createGroupLocally(title: string, reason: OfflineFallbackReason = 'manual-offline') {
+    if (!selectedSpaceId.value) throw new Error('Коллекция не выбрана');
+
+    const group: CouponGroup = {
+      id: createLocalId('group'),
+      space_id: selectedSpaceId.value,
+      title,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+      coupons_count: 0,
+    };
+
+    groups.value = [...groups.value, group].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+    await offlineDb.upsertGroup(group);
+    await addQueueOperation(createQueueOperation('group', 'create', selectedSpaceId.value, group.id, { title }));
+    notifySavedOffline(reason);
+    return group;
+  }
+
+  /**
+   * Renames a group locally and queues the change for future sync.
+   */
+  async function renameGroupLocally(groupId: string, title: string, reason: OfflineFallbackReason = 'manual-offline') {
+    const current = groups.value.find((group) => group.id === groupId);
+    if (!current) throw new Error('Группа не найдена');
+
+    const updated = { ...current, title, updated_at: nowIso() };
+    groups.value = groups.value.map((group) => (group.id === groupId ? updated : group));
+    await offlineDb.upsertGroup(updated);
+    await mergeQueuedCreateOrAddUpdate('group', current.space_id, groupId, { title });
+    notifySavedOffline(reason);
+    return updated;
+  }
+
+  /**
+   * Deletes a group locally. Server-side deletion is queued when the group already exists remotely.
+   */
+  async function deleteGroupLocally(groupId: string, reason: OfflineFallbackReason = 'manual-offline') {
+    const current = groups.value.find((group) => group.id === groupId);
+
+    groups.value = groups.value.filter((group) => group.id !== groupId);
+    coupons.value = coupons.value.map((coupon) => (coupon.group_id === groupId ? { ...coupon, group_id: null, updated_at: nowIso() } : coupon));
+    await offlineDb.removeGroup(groupId);
+    if (selectedSpaceId.value) await offlineDb.saveCoupons(selectedSpaceId.value, coupons.value);
+
+    if (isLocalId(groupId)) {
+      await removeQueuedOperationsForRecord('group', groupId);
+    } else if (current) {
+      await offlineDb.removeQueueOperations((operation) => operation.entity === 'group' && operation.record_id === groupId && operation.action === 'update');
+      await addQueueOperation(createQueueOperation('group', 'delete', current.space_id, groupId));
+    }
+
+    notifySavedOffline(reason);
+  }
+
+  /**
+   * Creates a coupon locally and queues it. Used both in offline mode and after network loss.
+   */
+  async function createCouponLocally(payload: CreateCouponPayload, reason: OfflineFallbackReason = 'manual-offline') {
+    if (!selectedSpaceId.value) throw new Error('Коллекция не выбрана');
+
+    const duplicate = findLocalCouponDuplicate(payload);
+    if (duplicate) {
+      error.value = 'Такой купон уже есть в этой коллекции';
+      throw new ApiError('Такой купон уже есть в этой коллекции', 409, { existing_coupon: duplicate });
+    }
+
+    const coupon: Coupon = {
+      id: createLocalId('coupon'),
+      space_id: selectedSpaceId.value,
+      group_id: payload.group_id ?? null,
+      created_by_user_id: user.value?.id ?? null,
+      title: payload.title,
+      qr_text: payload.qr_text,
+      type: payload.type,
+      note: payload.note ?? null,
+      expires_at: payload.expires_at ?? null,
+      is_favorite: false,
+      is_archived: false,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+      created_by: getLocalCreatedBy(),
+    };
+
+    coupons.value = [coupon, ...coupons.value];
+    await offlineDb.upsertCoupon(coupon);
+    await addQueueOperation(createQueueOperation('coupon', 'create', selectedSpaceId.value, coupon.id, { ...payload }));
+    notifySavedOffline(reason);
+    return coupon;
+  }
+
+  /**
+   * Updates a coupon locally and merges the mutation into the sync queue.
+   */
+  async function updateCouponLocally(couponId: string, payload: UpdateCouponPayload, reason: OfflineFallbackReason = 'manual-offline') {
+    const current = coupons.value.find((coupon) => coupon.id === couponId);
+    if (!current) throw new Error('Купон не найден');
+
+    const updated: Coupon = {
+      ...current,
+      ...payload,
+      group_id: payload.group_id === undefined ? current.group_id : payload.group_id ?? null,
+      note: payload.note === undefined ? current.note : payload.note ?? null,
+      expires_at: payload.expires_at === undefined ? current.expires_at : payload.expires_at ?? null,
+      updated_at: nowIso(),
+    };
+
+    coupons.value = coupons.value.map((coupon) => (coupon.id === updated.id ? updated : coupon));
+    await offlineDb.upsertCoupon(updated);
+    await mergeQueuedCreateOrAddUpdate('coupon', current.space_id, couponId, payload as LocalQueuePayload);
+    notifySavedOffline(reason);
+    return updated;
+  }
+
+  /**
+   * Deletes a coupon locally and queues deletion for server records.
+   */
+  async function deleteCouponLocally(couponId: string, reason: OfflineFallbackReason = 'manual-offline') {
+    const current = coupons.value.find((coupon) => coupon.id === couponId);
+
+    coupons.value = coupons.value.filter((coupon) => coupon.id !== couponId);
+    await offlineDb.removeCoupon(couponId);
+
+    if (isLocalId(couponId)) {
+      await removeQueuedOperationsForRecord('coupon', couponId);
+    } else if (current) {
+      await offlineDb.removeQueueOperations((operation) => operation.entity === 'coupon' && operation.record_id === couponId && operation.action === 'update');
+      await addQueueOperation(createQueueOperation('coupon', 'delete', current.space_id, couponId));
+    }
+
+    notifySavedOffline(reason);
+  }
+
+  /**
+   * Initializes user, collections and current collection data.
+   * Cached data is shown first, then Supabase data refreshes it when available.
+   */
   async function init() {
     setupNetworkListeners();
     isLoading.value = true;
@@ -272,7 +477,7 @@ export const useAppStore = defineStore('app', () => {
         throw new ApiError('Нет интернета и нет сохранённой локальной копии. Открой приложение один раз онлайн, чтобы включить офлайн-режим.', 0);
       }
 
-      error.value = 'Офлайн-режим: показываю последнюю сохранённую копию.';
+      syncError.value = 'Офлайн-режим: показываю последнюю сохранённую копию.';
       isLoading.value = false;
       return;
     }
@@ -314,6 +519,9 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Selects a collection and loads its data from server or cache.
+   */
   async function selectSpace(spaceId: string) {
     await rememberSelectedSpace(spaceId);
     isLoading.value = true;
@@ -329,8 +537,9 @@ export const useAppStore = defineStore('app', () => {
       await Promise.all([fetchMembers(), fetchGroups(), fetchCoupons()]);
     } catch (err) {
       markOfflineFromError(err);
-      if (!isOnline.value) {
+      if (canFallbackToOffline(err)) {
         await loadCachedSpace(spaceId);
+        syncError.value = getOfflineFallbackMessage(err);
         return;
       }
       setError(err);
@@ -347,11 +556,22 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    spaces.value = await api.request<Space[]>('/spaces');
-    await offlineDb.saveSpaces(spaces.value);
+    try {
+      spaces.value = await api.request<Space[]>('/spaces');
+      await offlineDb.saveSpaces(spaces.value);
 
-    if (!spaces.value.some((space) => space.id === selectedSpaceId.value)) {
-      await rememberSelectedSpace(spaces.value[0]?.id ?? null);
+      if (!spaces.value.some((space) => space.id === selectedSpaceId.value)) {
+        await rememberSelectedSpace(spaces.value[0]?.id ?? null);
+      }
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) {
+        const snapshot = await offlineDb.loadSnapshot(selectedSpaceId.value);
+        spaces.value = snapshot.spaces;
+        syncError.value = getOfflineFallbackMessage(err);
+        return;
+      }
+      throw err;
     }
   }
 
@@ -364,8 +584,19 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    members.value = await api.request<SpaceMember[]>(`/spaces/${selectedSpaceId.value}/members`);
-    await offlineDb.saveMembers(selectedSpaceId.value, members.value);
+    try {
+      members.value = await api.request<SpaceMember[]>(`/spaces/${selectedSpaceId.value}/members`);
+      await offlineDb.saveMembers(selectedSpaceId.value, members.value);
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) {
+        const snapshot = await offlineDb.loadSnapshot(selectedSpaceId.value);
+        members.value = snapshot.members;
+        syncError.value = getOfflineFallbackMessage(err);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function fetchGroups() {
@@ -377,8 +608,19 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    groups.value = await api.request<CouponGroup[]>(`/spaces/${selectedSpaceId.value}/groups`);
-    await offlineDb.saveGroups(selectedSpaceId.value, groups.value);
+    try {
+      groups.value = await api.request<CouponGroup[]>(`/spaces/${selectedSpaceId.value}/groups`);
+      await offlineDb.saveGroups(selectedSpaceId.value, groups.value);
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) {
+        const snapshot = await offlineDb.loadSnapshot(selectedSpaceId.value);
+        groups.value = snapshot.groups;
+        syncError.value = getOfflineFallbackMessage(err);
+        return;
+      }
+      throw err;
+    }
   }
 
   async function fetchCoupons(_options: { archived?: boolean } = {}) {
@@ -390,26 +632,46 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    const [active, archived] = await Promise.all([
-      api.request<Coupon[]>(`/spaces/${selectedSpaceId.value}/coupons`, { query: { archived: false } }),
-      api.request<Coupon[]>(`/spaces/${selectedSpaceId.value}/coupons`, { query: { archived: true } }),
-    ]);
+    try {
+      const [active, archived] = await Promise.all([
+        api.request<Coupon[]>(`/spaces/${selectedSpaceId.value}/coupons`, { query: { archived: false } }),
+        api.request<Coupon[]>(`/spaces/${selectedSpaceId.value}/coupons`, { query: { archived: true } }),
+      ]);
 
-    coupons.value = mergeCoupons(active, archived);
-    await offlineDb.saveCoupons(selectedSpaceId.value, coupons.value);
+      coupons.value = mergeCoupons(active, archived);
+      await offlineDb.saveCoupons(selectedSpaceId.value, coupons.value);
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) {
+        const snapshot = await offlineDb.loadSnapshot(selectedSpaceId.value);
+        coupons.value = snapshot.coupons;
+        syncError.value = getOfflineFallbackMessage(err);
+        return;
+      }
+      throw err;
+    }
   }
 
+  /**
+   * Refreshes current collection while preserving offline UX on network loss.
+   */
   async function refreshCurrentSpace() {
     if (!selectedSpaceId.value) return;
 
     if (isOnline.value) {
-      await syncPendingChanges();
-      await Promise.all([fetchMembers(), fetchGroups(), fetchCoupons()]);
-      const syncTime = nowIso();
-      lastSyncedAt.value = syncTime;
-      syncError.value = null;
-      await offlineDb.saveLastSyncedAt(syncTime);
-      return;
+      try {
+        await syncPendingChanges();
+        await Promise.all([fetchMembers(), fetchGroups(), fetchCoupons()]);
+        const syncTime = nowIso();
+        lastSyncedAt.value = syncTime;
+        syncError.value = null;
+        await offlineDb.saveLastSyncedAt(syncTime);
+        return;
+      } catch (err) {
+        markOfflineFromError(err);
+        if (!canFallbackToOffline(err)) throw err;
+        syncError.value = getOfflineFallbackMessage(err);
+      }
     }
 
     await loadCachedSpace(selectedSpaceId.value);
@@ -485,29 +747,25 @@ export const useAppStore = defineStore('app', () => {
     if (!selectedSpaceId.value) throw new Error('Коллекция не выбрана');
 
     if (!isOnline.value) {
-      const group: CouponGroup = {
-        id: createLocalId('group'),
-        space_id: selectedSpaceId.value,
-        title,
-        created_at: nowIso(),
-        updated_at: nowIso(),
-        coupons_count: 0,
-      };
-
-      groups.value = [...groups.value, group].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
-      await offlineDb.upsertGroup(group);
-      await addQueueOperation(createQueueOperation('group', 'create', selectedSpaceId.value, group.id, { title }));
-      return group;
+      return createGroupLocally(title, 'manual-offline');
     }
 
-    const group = await api.request<CouponGroup>(`/spaces/${selectedSpaceId.value}/groups`, {
-      method: 'POST',
-      body: { title },
-    });
+    try {
+      const group = await api.request<CouponGroup>(`/spaces/${selectedSpaceId.value}/groups`, {
+        method: 'POST',
+        body: { title },
+      });
 
-    groups.value = [...groups.value, { ...group, coupons_count: 0 }].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
-    await offlineDb.upsertGroup({ ...group, coupons_count: 0 });
-    return group;
+      groups.value = [...groups.value, { ...group, coupons_count: 0 }].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+      await offlineDb.upsertGroup({ ...group, coupons_count: 0 });
+      syncError.value = null;
+      return group;
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) return createGroupLocally(title, 'network');
+      setError(err);
+      throw err;
+    }
   }
 
   async function renameGroup(groupId: string, title: string) {
@@ -515,47 +773,49 @@ export const useAppStore = defineStore('app', () => {
     if (!current) throw new Error('Группа не найдена');
 
     if (!isOnline.value) {
-      const updated = { ...current, title, updated_at: nowIso() };
-      groups.value = groups.value.map((group) => (group.id === groupId ? updated : group));
-      await offlineDb.upsertGroup(updated);
-      await mergeQueuedCreateOrAddUpdate('group', current.space_id, groupId, { title });
-      return updated;
+      return renameGroupLocally(groupId, title, 'manual-offline');
     }
 
-    const updated = await api.request<CouponGroup>(`/groups/${groupId}`, {
-      method: 'PATCH',
-      body: { title },
-    });
+    try {
+      const updated = await api.request<CouponGroup>(`/groups/${groupId}`, {
+        method: 'PATCH',
+        body: { title },
+      });
 
-    groups.value = groups.value.map((group) => (group.id === updated.id ? { ...group, ...updated } : group));
-    await offlineDb.upsertGroup(updated);
-    return updated;
+      groups.value = groups.value.map((group) => (group.id === updated.id ? { ...group, ...updated } : group));
+      await offlineDb.upsertGroup(updated);
+      syncError.value = null;
+      return updated;
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) return renameGroupLocally(groupId, title, 'network');
+      setError(err);
+      throw err;
+    }
   }
 
   async function deleteGroup(groupId: string) {
-    const current = groups.value.find((group) => group.id === groupId);
-
     if (!isOnline.value) {
-      groups.value = groups.value.filter((group) => group.id !== groupId);
-      coupons.value = coupons.value.map((coupon) => (coupon.group_id === groupId ? { ...coupon, group_id: null, updated_at: nowIso() } : coupon));
-      await offlineDb.removeGroup(groupId);
-      await offlineDb.saveCoupons(selectedSpaceId.value ?? '', coupons.value);
-
-      if (isLocalId(groupId)) {
-        await removeQueuedOperationsForRecord('group', groupId);
-      } else if (current) {
-        await offlineDb.removeQueueOperations((operation) => operation.entity === 'group' && operation.record_id === groupId && operation.action === 'update');
-        await addQueueOperation(createQueueOperation('group', 'delete', current.space_id, groupId));
-      }
-
+      await deleteGroupLocally(groupId, 'manual-offline');
       return;
     }
 
-    await api.request<{ ok: true }>(`/groups/${groupId}`, { method: 'DELETE' });
-    groups.value = groups.value.filter((group) => group.id !== groupId);
-    coupons.value = coupons.value.map((coupon) => (coupon.group_id === groupId ? { ...coupon, group_id: null } : coupon));
-    await offlineDb.removeGroup(groupId);
-    if (selectedSpaceId.value) await offlineDb.saveCoupons(selectedSpaceId.value, coupons.value);
+    try {
+      await api.request<{ ok: true }>(`/groups/${groupId}`, { method: 'DELETE' });
+      groups.value = groups.value.filter((group) => group.id !== groupId);
+      coupons.value = coupons.value.map((coupon) => (coupon.group_id === groupId ? { ...coupon, group_id: null } : coupon));
+      await offlineDb.removeGroup(groupId);
+      if (selectedSpaceId.value) await offlineDb.saveCoupons(selectedSpaceId.value, coupons.value);
+      syncError.value = null;
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) {
+        await deleteGroupLocally(groupId, 'network');
+        return;
+      }
+      setError(err);
+      throw err;
+    }
   }
 
   async function createCoupon(payload: CreateCouponPayload) {
@@ -565,34 +825,7 @@ export const useAppStore = defineStore('app', () => {
 
     try {
       if (!isOnline.value) {
-        const duplicate = coupons.value.find((coupon) => !coupon.is_archived && coupon.qr_text === payload.qr_text && coupon.space_id === selectedSpaceId.value);
-        if (duplicate) {
-          error.value = 'Такой купон уже есть в этой коллекции';
-          throw new ApiError('Такой купон уже есть в этой коллекции', 409, { existing_coupon: duplicate });
-        }
-
-        const coupon: Coupon = {
-          id: createLocalId('coupon'),
-          space_id: selectedSpaceId.value,
-          group_id: payload.group_id ?? null,
-          created_by_user_id: user.value?.id ?? null,
-          title: payload.title,
-          qr_text: payload.qr_text,
-          type: payload.type,
-          note: payload.note ?? null,
-          expires_at: payload.expires_at ?? null,
-          is_favorite: false,
-          is_archived: false,
-          created_at: nowIso(),
-          updated_at: nowIso(),
-          created_by: getLocalCreatedBy(),
-        };
-
-        coupons.value = [coupon, ...coupons.value];
-        await offlineDb.upsertCoupon(coupon);
-        await addQueueOperation(createQueueOperation('coupon', 'create', selectedSpaceId.value, coupon.id, { ...payload }));
-        await fetchGroups();
-        return coupon;
+        return await createCouponLocally(payload, 'manual-offline');
       }
 
       const coupon = await api.request<Coupon>(`/spaces/${selectedSpaceId.value}/coupons`, {
@@ -602,7 +835,7 @@ export const useAppStore = defineStore('app', () => {
 
       coupons.value = [coupon, ...coupons.value];
       await offlineDb.upsertCoupon(coupon);
-      await fetchGroups();
+      syncError.value = null;
       return coupon;
     } catch (err) {
       markOfflineFromError(err);
@@ -611,6 +844,10 @@ export const useAppStore = defineStore('app', () => {
         const details = err.details as DuplicateCouponDetails | undefined;
         error.value = 'Такой купон уже есть в этой коллекции';
         throw new ApiError('Такой купон уже есть в этой коллекции', 409, details);
+      }
+
+      if (canFallbackToOffline(err)) {
+        return await createCouponLocally(payload, 'network');
       }
 
       setError(err);
@@ -625,55 +862,47 @@ export const useAppStore = defineStore('app', () => {
     if (!current) throw new Error('Купон не найден');
 
     if (!isOnline.value) {
-      const updated: Coupon = {
-        ...current,
-        ...payload,
-        group_id: payload.group_id === undefined ? current.group_id : payload.group_id ?? null,
-        note: payload.note === undefined ? current.note : payload.note ?? null,
-        expires_at: payload.expires_at === undefined ? current.expires_at : payload.expires_at ?? null,
-        updated_at: nowIso(),
-      };
+      return updateCouponLocally(couponId, payload, 'manual-offline');
+    }
+
+    try {
+      const updated = await api.request<Coupon>(`/coupons/${couponId}`, {
+        method: 'PATCH',
+        body: payload,
+      });
 
       coupons.value = coupons.value.map((coupon) => (coupon.id === updated.id ? updated : coupon));
       await offlineDb.upsertCoupon(updated);
-      await mergeQueuedCreateOrAddUpdate('coupon', current.space_id, couponId, payload as LocalQueuePayload);
-      await fetchGroups();
+      syncError.value = null;
       return updated;
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) return updateCouponLocally(couponId, payload, 'network');
+      setError(err);
+      throw err;
     }
-
-    const updated = await api.request<Coupon>(`/coupons/${couponId}`, {
-      method: 'PATCH',
-      body: payload,
-    });
-
-    coupons.value = coupons.value.map((coupon) => (coupon.id === updated.id ? updated : coupon));
-    await offlineDb.upsertCoupon(updated);
-    await fetchGroups();
-    return updated;
   }
 
   async function deleteCoupon(couponId: string) {
-    const current = coupons.value.find((coupon) => coupon.id === couponId);
-
     if (!isOnline.value) {
-      coupons.value = coupons.value.filter((coupon) => coupon.id !== couponId);
-      await offlineDb.removeCoupon(couponId);
-
-      if (isLocalId(couponId)) {
-        await removeQueuedOperationsForRecord('coupon', couponId);
-      } else if (current) {
-        await offlineDb.removeQueueOperations((operation) => operation.entity === 'coupon' && operation.record_id === couponId && operation.action === 'update');
-        await addQueueOperation(createQueueOperation('coupon', 'delete', current.space_id, couponId));
-      }
-
-      await fetchGroups();
+      await deleteCouponLocally(couponId, 'manual-offline');
       return;
     }
 
-    await api.request<{ ok: true }>(`/coupons/${couponId}`, { method: 'DELETE' });
-    coupons.value = coupons.value.filter((coupon) => coupon.id !== couponId);
-    await offlineDb.removeCoupon(couponId);
-    await fetchGroups();
+    try {
+      await api.request<{ ok: true }>(`/coupons/${couponId}`, { method: 'DELETE' });
+      coupons.value = coupons.value.filter((coupon) => coupon.id !== couponId);
+      await offlineDb.removeCoupon(couponId);
+      syncError.value = null;
+    } catch (err) {
+      markOfflineFromError(err);
+      if (canFallbackToOffline(err)) {
+        await deleteCouponLocally(couponId, 'network');
+        return;
+      }
+      setError(err);
+      throw err;
+    }
   }
 
   async function replaceLocalGroupId(localId: string, serverGroup: CouponGroup) {
@@ -707,6 +936,9 @@ export const useAppStore = defineStore('app', () => {
     }));
   }
 
+  /**
+   * Sends queued local operations to Supabase in chronological order.
+   */
   async function syncPendingChanges() {
     if (!isOnline.value || isSyncing.value) return;
 

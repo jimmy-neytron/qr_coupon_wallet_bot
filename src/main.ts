@@ -1,9 +1,10 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
+import { router } from './router';
 import './styles/main.scss';
 
-createApp(App).use(createPinia()).mount('#app');
+createApp(App).use(createPinia()).use(router).mount('#app');
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {

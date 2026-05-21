@@ -850,30 +850,6 @@ canvas {
   color: var(--danger) !important;
 }
 
-.toast {
-  position: sticky;
-  top: calc(10px + var(--safe-top));
-  z-index: 20;
-  margin-top: 12px;
-  padding: 13px 14px;
-  border: 1px solid transparent;
-  border-radius: 18px;
-  font-weight: 850;
-  box-shadow: var(--shadow-sm);
-
-  &--success {
-    color: color-mix(in srgb, var(--success) 78%, #0f172a);
-    background: color-mix(in srgb, var(--success) 15%, var(--surface));
-    border-color: color-mix(in srgb, var(--success) 22%, transparent);
-  }
-
-  &--error {
-    color: color-mix(in srgb, var(--danger) 82%, #0f172a);
-    background: color-mix(in srgb, var(--danger) 14%, var(--surface));
-    border-color: color-mix(in srgb, var(--danger) 25%, transparent);
-  }
-}
-
 .empty-state {
   display: grid;
   place-items: center;
