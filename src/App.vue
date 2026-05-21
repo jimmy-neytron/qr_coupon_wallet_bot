@@ -607,6 +607,7 @@ onMounted(async () => {
     <ExpiringCouponsModal
       v-model="expiringCouponsModalOpen"
       :coupons="store.expiringSoonCoupons"
+      :groups="store.groups"
       @open="openExpiringCoupon"
     />
 

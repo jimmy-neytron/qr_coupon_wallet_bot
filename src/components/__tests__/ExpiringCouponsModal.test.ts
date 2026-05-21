@@ -1,7 +1,20 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
-import type { Coupon } from '../../types/domain';
+import type { Coupon, CouponGroup } from '../../types/domain';
 import ExpiringCouponsModal from '../ExpiringCouponsModal.vue';
+
+
+function group(overrides: Partial<CouponGroup> = {}): CouponGroup {
+  return {
+    id: 'group-1',
+    space_id: 'space-1',
+    title: 'Магнит',
+    created_at: '2026-05-21T10:00:00.000Z',
+    updated_at: '2026-05-21T10:00:00.000Z',
+    coupons_count: 1,
+    ...overrides,
+  };
+}
 
 function coupon(overrides: Partial<Coupon> = {}): Coupon {
   return {
@@ -40,15 +53,18 @@ describe('ExpiringCouponsModal', () => {
       props: {
         modelValue: true,
         coupons: [
-          { coupon: coupon({ id: 'today', title: 'Магнит', expires_at: '2026-05-21' }), daysLeft: 0 },
-          { coupon: coupon({ id: 'tomorrow', title: 'Аптека', expires_at: '2026-05-22' }), daysLeft: 1 },
+          { coupon: coupon({ id: 'today', title: 'Скидка 10%', group_id: 'group-magnit', expires_at: '2026-05-21' }), daysLeft: 0 },
+          { coupon: coupon({ id: 'tomorrow', title: 'Аптека', group_id: null, expires_at: '2026-05-22' }), daysLeft: 1 },
         ],
+        groups: [group({ id: 'group-magnit', title: 'Магнит' })],
       },
     });
 
     expect(wrapper.text()).toContain('Скоро закончатся');
-    expect(wrapper.text()).toContain('Магнит');
+    expect(wrapper.text()).toContain('Скидка 10%');
     expect(wrapper.text()).toContain('Аптека');
+    expect(wrapper.text()).toContain('Магнит');
+    expect(wrapper.text()).toContain('Без группы');
     expect(wrapper.text()).toContain('Сегодня');
     expect(wrapper.text()).toContain('Завтра');
 
@@ -62,6 +78,7 @@ describe('ExpiringCouponsModal', () => {
       props: {
         modelValue: true,
         coupons: [{ coupon: expiringCoupon, daysLeft: 3 }],
+        groups: [],
       },
     });
 
@@ -69,6 +86,21 @@ describe('ExpiringCouponsModal', () => {
 
     expect(wrapper.emitted('open')?.[0]).toEqual([expiringCoupon]);
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([false]);
+
+    wrapper.unmount();
+  });
+
+  it('shows a fallback when the coupon group was removed from the collection cache', () => {
+    const wrapper = mount(ExpiringCouponsModal, {
+      ...mountOptions,
+      props: {
+        modelValue: true,
+        coupons: [{ coupon: coupon({ id: 'removed-group', group_id: 'missing-group' }), daysLeft: 2 }],
+        groups: [],
+      },
+    });
+
+    expect(wrapper.text()).toContain('Группа удалена');
 
     wrapper.unmount();
   });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import BaseModal from './BaseModal.vue';
-import type { Coupon } from '../types/domain';
+import type { Coupon, CouponGroup } from '../types/domain';
 import type { ExpiringCouponInfo } from '../utils/expiry';
 import { getExpiryLabel } from '../utils/expiry';
 import { formatDate } from '../utils/date';
@@ -8,6 +8,7 @@ import { formatDate } from '../utils/date';
 const props = defineProps<{
   modelValue: boolean;
   coupons: ExpiringCouponInfo[];
+  groups: CouponGroup[];
 }>();
 
 const emit = defineEmits<{
@@ -18,6 +19,16 @@ const emit = defineEmits<{
 /** Closes the reminder modal without changing coupon data. */
 function close() {
   emit('update:modelValue', false);
+}
+
+/**
+ * Returns the readable group title for a coupon inside the active collection.
+ * Coupons without a group are displayed as "Без группы".
+ */
+function getCouponGroupTitle(coupon: Coupon) {
+  if (!coupon.group_id) return 'Без группы';
+
+  return props.groups.find((group) => group.id === coupon.group_id)?.title ?? 'Группа удалена';
 }
 
 /** Opens a coupon from the reminder list and closes the modal. */
@@ -60,7 +71,17 @@ function openCoupon(coupon: Coupon) {
         >
           <span class="expiry-modal__item-main">
             <strong>{{ item.coupon.title }}</strong>
-            <small>Действует до {{ formatDate(item.coupon.expires_at) }}</small>
+
+            <span class="expiry-modal__item-meta">
+              <small class="expiry-modal__item-group">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2h5.5A2.5 2.5 0 0 1 20 9.5v7A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-9Z" />
+                </svg>
+                {{ getCouponGroupTitle(item.coupon) }}
+              </small>
+
+              <small>Действует до {{ formatDate(item.coupon.expires_at) }}</small>
+            </span>
           </span>
 
           <span class="expiry-modal__item-badge">
@@ -171,23 +192,50 @@ function openCoupon(coupon: Coupon) {
 .expiry-modal__item-main {
   min-width: 0;
 
-  strong,
-  small {
-    display: block;
-  }
-
   strong {
+    display: block;
     overflow: hidden;
     font-weight: 950;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+.expiry-modal__item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
 
   small {
-    margin-top: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 5px 8px;
+    border-radius: 999px;
     color: var(--muted);
-    font-size: 12px;
-    font-weight: 800;
+    background: color-mix(in srgb, var(--surface-soft) 86%, transparent);
+    font-size: 11px;
+    font-weight: 850;
+    line-height: 1.15;
+  }
+}
+
+.expiry-modal__item-group {
+  max-width: 100%;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text)) !important;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface)) !important;
+
+  svg {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
 
