@@ -8,8 +8,9 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "lint": "vue-tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:coverage": "vitest run --coverage --config vitest.config.ts"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
@@ -21,7 +22,10 @@
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.5",
+    "@vitest/coverage-v8": "^4.1.7",
+    "@vue/test-utils": "^2.4.10",
     "fake-indexeddb": "^6.2.5",
+    "jsdom": "^29.1.1",
     "sass-embedded": "^1.99.0",
     "typescript": "^5.7.2",
     "vitest": "^4.1.7",

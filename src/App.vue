@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, ref, watch } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
+import BottomNavigation from './components/layout/BottomNavigation.vue';
+import FloatingScanButton from './components/layout/FloatingScanButton.vue';
+import AppTopBar from './components/layout/AppTopBar.vue';
+import SyncStatusBanner from './components/layout/SyncStatusBanner.vue';
 import CouponFormModal from './components/CouponFormModal.vue';
 import InviteModal from './components/InviteModal.vue';
-import LoadingSpinner from './components/LoadingSpinner.vue';
 import QrCodeViewer from './components/QrCodeViewer.vue';
 import TextInputModal from './components/TextInputModal.vue';
 import AppToastStack from './components/ui/AppToastStack.vue';
@@ -524,45 +527,22 @@ onMounted(async () => {
 <template>
   <main class="app-shell" data-scroll-lock-root>
     <div class="app-layout app-layout--with-nav">
-      <header class="topbar topbar--product">
-        <button class="brand-block brand-block--button" type="button" @click="setTab('home')">
-          <div class="brand-logo">QR</div>
-          <div>
-            <p class="eyebrow">{{ activeTabLabel }}</p>
-            <h1>QR Купоны</h1>
-          </div>
-        </button>
+      <AppTopBar
+        :active-tab-label="activeTabLabel"
+        :profile-initial="profileInitial"
+        :current-user-name="currentUserName"
+        @navigate="setTab"
+      />
 
-        <button class="user-chip user-chip--button" type="button" @click="setTab('profile')">
-          <span>{{ profileInitial }}</span>
-          <strong>{{ currentUserName }}</strong>
-        </button>
-      </header>
-
-      <section v-if="store.isOffline || store.pendingSyncCount > 0 || store.isSyncing || store.syncError" class="sync-banner" :class="{ 'sync-banner--offline': store.isOffline || store.syncError, 'sync-banner--syncing': store.isSyncing }">
-        <div class="sync-banner__icon" aria-hidden="true">
-          <LoadingSpinner v-if="store.isSyncing" />
-          <svg v-else-if="store.isOffline" viewBox="0 0 24 24">
-            <path d="M2 8.5A15 15 0 0 1 22 8.5" />
-            <path d="M5.5 12a10 10 0 0 1 13 0" />
-            <path d="M9 15.5a5 5 0 0 1 6 0" />
-            <path d="M4 4 20 20" />
-          </svg>
-          <svg v-else viewBox="0 0 24 24">
-            <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-            <path d="M3 12A9 9 0 0 1 18.5 5.8" />
-            <path d="M21 4v6h-6" />
-            <path d="M3 20v-6h6" />
-          </svg>
-        </div>
-        <div>
-          <strong>{{ syncStatusTitle }}</strong>
-          <small>{{ syncStatusText }}</small>
-        </div>
-        <button v-if="!store.isOffline && store.pendingSyncCount > 0" class="sync-banner__button" type="button" :disabled="store.isSyncing" @click="syncNow">
-          {{ store.isSyncing ? '...' : 'Синхр.' }}
-        </button>
-      </section>
+      <SyncStatusBanner
+        :visible="store.isOffline || store.pendingSyncCount > 0 || store.isSyncing || Boolean(store.syncError)"
+        :is-offline="store.isOffline || Boolean(store.syncError)"
+        :is-syncing="store.isSyncing"
+        :pending-sync-count="store.pendingSyncCount"
+        :title="syncStatusTitle"
+        :text="syncStatusText"
+        @sync="syncNow"
+      />
 
       <div v-if="store.isLoading" class="loader-card">
         <div class="loader-pulse"></div>
@@ -573,40 +553,9 @@ onMounted(async () => {
       <RouterView v-else />
     </div>
 
-    <nav class="bottom-nav" aria-label="Главная навигация">
-      <button class="bottom-nav__item" :class="{ 'bottom-nav__item--active': activeTab === 'home' }" type="button" @click="setTab('home')">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h11A2.5 2.5 0 0 1 20 8.5v1.25a2.25 2.25 0 0 0 0 4.5v1.25A2.5 2.5 0 0 1 17.5 18h-11A2.5 2.5 0 0 1 4 15.5v-1.25a2.25 2.25 0 0 0 0-4.5z" />
-          <path d="m9 15 6-6" />
-        </svg>
-        <span>Промо</span>
-      </button>
-      <button class="bottom-nav__item" :class="{ 'bottom-nav__item--active': activeTab === 'groups' }" type="button" @click="setTab('groups')">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          <path d="M8 12h8" />
-        </svg>
-        <span>Группы</span>
-      </button>
-      <button class="bottom-nav__item" :class="{ 'bottom-nav__item--active': activeTab === 'profile' }" type="button" @click="setTab('profile')">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 21a8 8 0 0 0-16 0" />
-          <circle cx="12" cy="7" r="4" />
-        </svg>
-        <span>Профиль</span>
-      </button>
-    </nav>
+    <BottomNavigation :active-tab="activeTab" @navigate="setTab" />
 
-    <button v-if="activeTab === 'home'" class="floating-scan-button" type="button" aria-label="Сканировать QR" :disabled="isScanning" @click="scanCoupon">
-      <LoadingSpinner v-if="isScanning" />
-      <svg v-else viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="4" y="4" width="6" height="6" rx="1.3" />
-        <rect x="14" y="4" width="6" height="6" rx="1.3" />
-        <rect x="4" y="14" width="6" height="6" rx="1.3" />
-        <path d="M14 14h2.5v2.5H14z" />
-        <path d="M18 14h2v6h-6v-2h4z" />
-      </svg>
-    </button>
+    <FloatingScanButton :visible="activeTab === 'home'" :is-loading="isScanning" @scan="scanCoupon" />
 
     <CouponFormModal
       v-model="couponFormOpen"

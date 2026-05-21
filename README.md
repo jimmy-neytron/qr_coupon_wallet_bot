@@ -1,6 +1,6 @@
 # QR Coupon Wallet — Telegram Mini App
 
-Версия v8: исправлена офлайн-синхронизация после частичного успеха и ошибка IndexedDB `The object can not be cloned` при работе с группами.
+Версия v10: выполнена декомпозиция UI по принципу LIFT, добавлены переиспользуемые компоненты экранов и unit-тесты с coverage-порогом 90% для core-логики.
 
 Мини-приложение для Telegram, где можно хранить QR-купоны и текстовые промокоды лично или в общем пространстве с другим Telegram-пользователем.
 
@@ -11,17 +11,23 @@
 ```bash
 npm install
 npm run test
+npm run test:coverage
 npm run build
 npm run dev
 ```
 
-В этой версии добавлены тесты для offline-режима:
+В этой версии добавлены unit-тесты для core-логики:
 
 - локальная IndexedDB-база;
 - сохранение пользователя, коллекций, групп и промокодов;
 - изоляция данных по коллекциям;
 - очередь синхронизации;
-- генерация локальных id;
+- offline fallback при пропаже сети;
+- online CRUD для групп, купонов и коллекций;
+- синхронизация очереди с заменой локальных id на серверные;
+- Telegram helper и fallback QR-сканера в браузере;
+- API helper с dev-auth и обработкой ошибок;
+- utils для дат и отображения пользователя;
 - сохранение Vue reactive/proxy-объектов в IndexedDB без `DataCloneError`;
 - обработка 409-конфликтов при повторной синхронизации уже созданных локально групп/купонов.
 
@@ -34,6 +40,21 @@ src/services/offlineDb.ts
 В этом архиве файл включён и используется в `src/stores/app.store.ts`.
 
 
+
+## Что изменено в v10
+
+- Главные экраны разложены на небольшие компоненты: `HomeHero`, `PromoMetrics`, `PromoToolbar`, `GroupFilterPanel`, `CouponListSection`, `GroupsHero`, `GroupsGridSection`, `ProfileHero`, `CollectionSummaryCard`, `AccessPanel`, `MembersCard`.
+- Общий shell вынесен в layout-компоненты: `AppTopBar`, `SyncStatusBanner`, `BottomNavigation`, `FloatingScanButton`.
+- Структура стала ближе к правилу LIFT: файлы легче найти, имена явно отражают назначение, структура осталась плоской внутри feature-папок, повторяющийся UI переиспользуется.
+- Исправлена важная edge-case ошибка offline fallback: серверные `ApiError` с текстом вроде `Validation failed` больше не считаются сетевой ошибкой и не сохраняют данные локально по ошибке.
+- Добавлен `npm run test:coverage` с порогами: statements/lines/functions — 90%, branches — 75%. Branches ниже 90% осознанно, потому что много веток завязано на платформенные события Telegram/WebView и IndexedDB.
+
+Проверенный результат coverage для core-логики:
+
+```txt
+All files: statements 91.95%, functions 92.51%, lines 94.01%, branches 76.54%
+app.store.ts: statements 90.94%, functions 95.04%, lines 92%
+```
 
 ## Что исправлено в v8
 
@@ -67,8 +88,14 @@ src/services/offlineDb.ts
 qr-coupon-wallet/
 ├─ src/
 │  ├─ components/
+│  │  ├─ groups/
+│  │  ├─ home/
+│  │  ├─ layout/
+│  │  ├─ profile/
+│  │  └─ ui/
 │  ├─ composables/
 │  ├─ stores/
+│  ├─ test/
 │  ├─ styles/
 │  ├─ types/
 │  ├─ utils/
@@ -342,7 +369,30 @@ Offline fallback стал мягче: если приложение считае
 
 ```bash
 npm run test
+npm run test:coverage
 npm run build
 ```
 
 Тесты покрывают IndexedDB-хранилище и fallback-сценарии, когда сеть пропадает во время создания группы или промокода.
+
+
+## Проверка тестов
+
+В этой версии тесты запускаются через отдельный `vitest.config.ts`. Это важно: в тестовом окружении явно включены `jsdom` и `fake-indexeddb`, поэтому доступны `window`, `indexedDB` и другие browser API.
+
+```bash
+npm ci
+npm run test:coverage
+npm run build
+```
+
+Ожидаемый результат:
+
+```txt
+6 test files passed
+54 tests passed
+statements: 91%+
+lines: 94%+
+```
+
+Если запускать `npx vitest` напрямую, можно случайно обойти нужный конфиг. Используй команды из `package.json`.

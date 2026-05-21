@@ -213,10 +213,10 @@ export const offlineDb = {
     const db = await openDatabase();
     const transaction = db.transaction(['user', 'spaces'], 'readwrite');
     transaction.objectStore('user').clear();
-    transaction.objectStore('user').put(user);
+    transaction.objectStore('user').put(toPlainRecord(user));
 
     const spacesStore = transaction.objectStore('spaces');
-    spaces.forEach((space) => spacesStore.put(space));
+    toPlainRecords(spaces).forEach((space) => spacesStore.put(space));
     await makeTransactionPromise(transaction);
   },
 
@@ -224,7 +224,7 @@ export const offlineDb = {
     const db = await openDatabase();
     const transaction = db.transaction('spaces', 'readwrite');
     const store = transaction.objectStore('spaces');
-    spaces.forEach((space) => store.put(space));
+    toPlainRecords(spaces).forEach((space) => store.put(space));
     await makeTransactionPromise(transaction);
   },
 

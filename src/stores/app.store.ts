@@ -35,6 +35,7 @@ function nowIso() {
  * Detects browser/network errors produced by failed fetch requests.
  */
 export function isNetworkLikeError(value: unknown) {
+  if (value instanceof ApiError) return false;
   return value instanceof TypeError || (value instanceof Error && /fetch|network|failed|load failed|internet|offline/i.test(value.message));
 }
 
