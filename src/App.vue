@@ -18,6 +18,7 @@ import { useAppStore } from './stores/app.store';
 import type { Coupon, CouponGroup, CouponType, CreateCouponPayload, Invite } from './types/domain';
 import { shouldShowExpiringCouponsModal, markExpiringCouponsModalShown } from './utils/expiryReminder';
 import { displayUserName, normalizeSearch } from './utils/text';
+import { createInviteLink, getInviteCodeFromLaunchParams } from './utils/inviteLink';
 
 const store = useAppStore();
 const telegram = useTelegram();
@@ -74,6 +75,14 @@ const isCouponSaving = computed(() => store.isSaving || isActionPending('coupon:
 const isTextModalSubmitting = computed(() => isActionPending(`text-modal:${textModalMode.value}`));
 const isInviteCreating = computed(() => isActionPending('invite:create'));
 const isArchiveFilterLoading = computed(() => isActionPending('coupons:archive-filter'));
+const inviteLink = computed(() => {
+  if (!invite.value) return '';
+
+  return createInviteLink(invite.value.code, {
+    botUsername: import.meta.env.VITE_TELEGRAM_BOT_USERNAME,
+    miniAppName: import.meta.env.VITE_TELEGRAM_APP_NAME,
+  });
+});
 
 const activeSpaceBadge = computed(() => {
   if (!store.selectedSpace) return 'Коллекция не выбрана';
@@ -375,9 +384,11 @@ async function saveCoupon(payload: CreateCouponPayload) {
   await runLockedAction('coupon:save', async () => {
     if (editingCoupon.value) {
       await store.updateCoupon(editingCoupon.value.id, payload);
+      showSuccess('Купон обновлён');
     } else {
       const created = await store.createCoupon(payload);
       selectedCoupon.value = created;
+      showSuccess('Купон сохранён');
     }
 
     couponFormOpen.value = false;
@@ -402,20 +413,24 @@ async function submitTextModal(rawValue: string) {
     if (mode === 'create-group') {
       const group = await store.createGroup(value);
       activeGroupId.value = group.id;
+      showSuccess('Группа создана');
     }
 
     if (mode === 'rename-group' && textModalGroup.value) {
       await store.renameGroup(textModalGroup.value.id, value);
+      showSuccess('Группа переименована');
     }
 
     if (mode === 'create-space') {
       await store.createSharedSpace(value);
       activeGroupId.value = 'all';
+      showSuccess('Общая коллекция создана');
     }
 
     if (mode === 'join-code') {
       await store.acceptInvite(value);
       activeGroupId.value = 'all';
+      showSuccess('Вы добавлены в общую коллекцию');
     }
 
     textModalOpen.value = false;
@@ -436,7 +451,7 @@ async function deleteGroup(group: CouponGroup) {
   await runLockedAction(`group:delete:${group.id}`, async () => {
     await store.deleteGroup(group.id);
     if (activeGroupId.value === group.id) activeGroupId.value = 'all';
-  });
+  }, 'Группа удалена');
 }
 
 function createSharedSpace() {
@@ -452,10 +467,32 @@ async function openInviteModal() {
   inviteModalOpen.value = true;
 }
 
+/** Accepts invite links opened from Telegram startapp or browser query. */
+async function acceptInviteFromLaunchLink() {
+  const inviteCode = getInviteCodeFromLaunchParams({
+    startParam: telegram.startParam.value,
+    search: window.location.search,
+  });
+
+  if (!inviteCode) return;
+
+  const storageKey = `qr_coupon_wallet:accepted_invite_link:${inviteCode}`;
+  if (sessionStorage.getItem(storageKey) === 'done') return;
+
+  await store.acceptInvite(inviteCode);
+  sessionStorage.setItem(storageKey, 'done');
+  activeGroupId.value = 'all';
+  showSuccess('Вы добавлены в общую коллекцию');
+
+  const nextQuery = { ...route.query };
+  delete nextQuery.invite;
+  await router.replace({ path: '/', query: nextQuery });
+}
+
 async function createInvite() {
   await runLockedAction('invite:create', async () => {
     invite.value = await store.createInvite();
-  });
+  }, 'Код приглашения создан');
 }
 
 async function toggleFavorite(coupon: Coupon) {
@@ -469,7 +506,7 @@ async function toggleArchive(coupon: Coupon, archived: boolean) {
 
   await runLockedAction(actionKey, async () => {
     await store.updateCoupon(coupon.id, { is_archived: archived });
-  });
+  }, archived ? 'Купон в архиве' : 'Купон восстановлен');
 }
 
 async function deleteCoupon(coupon: Coupon) {
@@ -477,7 +514,7 @@ async function deleteCoupon(coupon: Coupon) {
 
   await runLockedAction(`coupon:delete:${coupon.id}`, async () => {
     await store.deleteCoupon(coupon.id);
-  });
+  }, 'Купон удалён');
 }
 
 watch(showArchived, async (value) => {
@@ -549,6 +586,7 @@ onMounted(async () => {
   telegram.init();
   await safeAction(async () => {
     await store.init();
+    await acceptInviteFromLaunchLink();
     showExpiringCouponsModalIfNeeded();
   });
 });
@@ -607,7 +645,7 @@ onMounted(async () => {
 
     <QrCodeViewer v-model="couponViewerOpen" :coupon="selectedCoupon" />
 
-    <InviteModal v-model="inviteModalOpen" :invite="invite" :is-creating="isInviteCreating" @create="createInvite" />
+    <InviteModal v-model="inviteModalOpen" :invite="invite" :invite-link="inviteLink" :is-creating="isInviteCreating" @create="createInvite" />
 
     <TextInputModal
       v-model="textModalOpen"

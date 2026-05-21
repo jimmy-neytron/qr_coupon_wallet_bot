@@ -33,7 +33,7 @@ describe('useTelegram', () => {
     (window as any).Telegram = {
       WebApp: {
         initData: 'telegram-init-data',
-        initDataUnsafe: { user: { id: 1, first_name: 'Dev' } },
+        initDataUnsafe: { user: { id: 1, first_name: 'Dev' }, start_param: 'invite_CODE-1' },
         ready,
         expand,
         enableClosingConfirmation: vi.fn(),
@@ -56,6 +56,7 @@ describe('useTelegram', () => {
     expect(expand).toHaveBeenCalled();
     expect(disableVerticalSwipes).toHaveBeenCalled();
     expect(telegram.initData.value).toBe('telegram-init-data');
+    expect(telegram.startParam.value).toBe('invite_CODE-1');
     telegram.hapticSuccess();
     telegram.hapticError();
     telegram.hapticLight();

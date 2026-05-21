@@ -38,6 +38,7 @@ export function useTelegram() {
 
   const initData = computed(() => tg.value?.initData || '');
   const unsafeUser = computed<TelegramWebAppUser | null>(() => tg.value?.initDataUnsafe?.user ?? null);
+  const startParam = computed(() => tg.value?.initDataUnsafe?.start_param || '');
   const isTelegram = computed(() => Boolean(tg.value?.initData));
 
   const hapticSuccess = () => tg.value?.HapticFeedback?.notificationOccurred?.('success');
@@ -83,6 +84,7 @@ export function useTelegram() {
     init,
     initData,
     unsafeUser,
+    startParam,
     isReady,
     isTelegram,
     scanQrCode,
