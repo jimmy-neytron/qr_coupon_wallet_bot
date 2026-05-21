@@ -1,0 +1,10 @@
+{
+  "name": "QR Купоны",
+  "short_name": "QR Купоны",
+  "description": "Кошелёк QR-купонов и промокодов с офлайн-режимом.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#16a085"
+}

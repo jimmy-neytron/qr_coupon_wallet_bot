@@ -1,0 +1,4 @@
+project_id = "qr-coupon-wallet"
+
+[functions.api]
+verify_jwt = false
