@@ -39,13 +39,13 @@ const {
 
 <template>
   <section class="screen screen--home">
-    <HomeHero
-      :active-space-badge="activeSpaceBadge"
-      :is-scanning="isScanning"
-      @profile="setTab('profile')"
-      @scan="scanCoupon"
-      @add-manual="addManual"
-    />
+<!--    <HomeHero-->
+<!--      :active-space-badge="activeSpaceBadge"-->
+<!--      :is-scanning="isScanning"-->
+<!--      @profile="setTab('profile')"-->
+<!--      @scan="scanCoupon"-->
+<!--      @add-manual="addManual"-->
+<!--    />-->
 
     <PromoMetrics
       :active-count="store.activeCoupons.length"
