@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { ApiError, useApi } from '../composables/useApi';
 import { createLocalId, isLocalId, offlineDb, type SyncOperation } from '../services/offlineDb';
+import { getExpiringSoonCoupons } from '../utils/expiry';
 import type {
   AppUser,
   Coupon,
@@ -113,6 +114,7 @@ export const useAppStore = defineStore('app', () => {
   const isOwner = computed(() => currentUserRole.value === 'owner');
   const activeCoupons = computed(() => coupons.value.filter((coupon) => !coupon.is_archived));
   const archivedCoupons = computed(() => coupons.value.filter((coupon) => coupon.is_archived));
+  const expiringSoonCoupons = computed(() => getExpiringSoonCoupons(coupons.value));
   const isOffline = computed(() => !isOnline.value);
   const hasPendingSync = computed(() => pendingSyncCount.value > 0);
 
@@ -1057,6 +1059,7 @@ export const useAppStore = defineStore('app', () => {
     coupons,
     activeCoupons,
     archivedCoupons,
+    expiringSoonCoupons,
     currentUserRole,
     isOwner,
     isLoading,

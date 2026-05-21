@@ -6,6 +6,7 @@ import FloatingScanButton from './components/layout/FloatingScanButton.vue';
 import AppTopBar from './components/layout/AppTopBar.vue';
 import SyncStatusBanner from './components/layout/SyncStatusBanner.vue';
 import CouponFormModal from './components/CouponFormModal.vue';
+import ExpiringCouponsModal from './components/ExpiringCouponsModal.vue';
 import InviteModal from './components/InviteModal.vue';
 import QrCodeViewer from './components/QrCodeViewer.vue';
 import TextInputModal from './components/TextInputModal.vue';
@@ -15,6 +16,7 @@ import { useTelegram } from './composables/useTelegram';
 import { walletUiKey } from './composables/walletUi';
 import { useAppStore } from './stores/app.store';
 import type { Coupon, CouponGroup, CouponType, CreateCouponPayload, Invite } from './types/domain';
+import { shouldShowExpiringCouponsModal, markExpiringCouponsModalShown } from './utils/expiryReminder';
 import { displayUserName, normalizeSearch } from './utils/text';
 
 const store = useAppStore();
@@ -33,6 +35,7 @@ const showArchived = ref(false);
 const couponFormOpen = ref(false);
 const couponViewerOpen = ref(false);
 const inviteModalOpen = ref(false);
+const expiringCouponsModalOpen = ref(false);
 const selectedCoupon = ref<Coupon | null>(null);
 const editingCoupon = ref<Coupon | null>(null);
 const scannedQrText = ref('');
@@ -44,6 +47,7 @@ const textModalOpen = ref(false);
 const textModalMode = ref<TextModalMode>('create-group');
 const textModalGroup = ref<CouponGroup | null>(null);
 const pendingActions = ref<Record<string, boolean>>({});
+const expiryReminderShownSpaceIds = ref<Set<string>>(new Set());
 
 const activeTab = computed<AppTab>(() => {
   if (route.name === 'groups') return 'groups';
@@ -259,6 +263,29 @@ function showSuccess(message: string) {
   }, 0);
 }
 
+/** Opens the expiring coupons modal once per collection when relevant coupons are loaded. */
+function showExpiringCouponsModalIfNeeded() {
+  if (!shouldShowExpiringCouponsModal({
+    selectedSpaceId: store.selectedSpaceId,
+    isLoading: store.isLoading,
+    expiringCount: store.expiringSoonCoupons.length,
+    shownSpaceIds: expiryReminderShownSpaceIds.value,
+  })) {
+    return;
+  }
+
+  if (!store.selectedSpaceId) return;
+
+  expiryReminderShownSpaceIds.value = markExpiringCouponsModalShown(expiryReminderShownSpaceIds.value, store.selectedSpaceId);
+  expiringCouponsModalOpen.value = true;
+}
+
+/** Opens a concrete coupon from the expiration reminder modal. */
+function openExpiringCoupon(coupon: Coupon) {
+  expiringCouponsModalOpen.value = false;
+  openCoupon(coupon);
+}
+
 /** Wraps async actions with error toasts and haptic feedback. */
 async function safeAction(action: () => Promise<void>, success?: string) {
   store.clearError();
@@ -465,6 +492,14 @@ watch(showArchived, async (value) => {
   });
 });
 
+watch(
+  () => [store.selectedSpaceId, store.isLoading, store.expiringSoonCoupons.length],
+  () => {
+    showExpiringCouponsModalIfNeeded();
+  },
+  { flush: 'post' },
+);
+
 provide(walletUiKey, {
   store,
   activeGroupId,
@@ -520,6 +555,7 @@ onMounted(async () => {
   telegram.init();
   await safeAction(async () => {
     await store.init();
+    showExpiringCouponsModalIfNeeded();
   });
 });
 </script>
@@ -566,6 +602,12 @@ onMounted(async () => {
       :initial-type="formInitialType"
       :is-saving="isCouponSaving"
       @save="saveCoupon"
+    />
+
+    <ExpiringCouponsModal
+      v-model="expiringCouponsModalOpen"
+      :coupons="store.expiringSoonCoupons"
+      @open="openExpiringCoupon"
     />
 
     <QrCodeViewer v-model="couponViewerOpen" :coupon="selectedCoupon" />
