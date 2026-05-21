@@ -54,15 +54,6 @@ const {
       :text-count="textCouponsCount"
     />
 
-    <PromoToolbar
-      v-model:search="search"
-      :show-archived="showArchived"
-      :active-count="store.activeCoupons.length"
-      :archived-count="archivedCount"
-      :is-archive-filter-loading="isArchiveFilterLoading"
-      @toggle-archived="toggleArchivedFilter"
-    />
-
     <GroupFilterPanel
       v-model="activeGroupId"
       :active-group-title="activeGroupTitle"
@@ -70,6 +61,15 @@ const {
       :all-count="visibleCouponsBase.length"
       :ungrouped-count="ungroupedCount"
       @manage="setTab('groups')"
+    />
+
+    <PromoToolbar
+        v-model:search="search"
+        :show-archived="showArchived"
+        :active-count="store.activeCoupons.length"
+        :archived-count="archivedCount"
+        :is-archive-filter-loading="isArchiveFilterLoading"
+        @toggle-archived="toggleArchivedFilter"
     />
 
     <CouponListSection
